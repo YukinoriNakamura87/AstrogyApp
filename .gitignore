@@ -1,0 +1,18 @@
+# 環境変数（機密情報を含むため必ずgitから除外）
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+
+# Nuxt / Node
+node_modules/
+.nuxt/
+.output/
+.cache/
+
+# OS
+.DS_Store
