@@ -29,6 +29,18 @@ class NatalChart:
     calculated_at: datetime | None = None
 
 
+@dataclass(slots=True)
+class ChartInterpretationMemo:
+    """A reusable interpretation attached to one point in a natal chart."""
+
+    chart_id: int
+    planet: str
+    content: str
+    id: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ChartSummary:
     """Portable text representation of a calculated natal chart."""

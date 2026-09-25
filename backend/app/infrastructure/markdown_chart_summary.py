@@ -1,6 +1,6 @@
 """Markdown adapter for portable, human- and AI-readable chart summaries."""
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Any
 
 from app.domain.entities import ChartSummary, Client, NatalChart
@@ -39,15 +39,14 @@ DEFAULT_POINT_ORDER = [
 HOUSE_ORDER = list(HOUSE_LABELS)
 
 
-def format_dms(value: float | int | Decimal) -> str:
-    """Round a zodiac degree to the nearest arcsecond."""
+def format_dm(value: float | int | Decimal) -> str:
+    """Truncate an angle to whole arcminutes for consistent display."""
 
-    total_seconds = int(
-        (Decimal(str(value)) * Decimal(3600)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    )
-    degrees, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{degrees}°{minutes:02d}′{seconds:02d}″"
+    decimal_value = Decimal(str(value))
+    prefix = "-" if decimal_value < 0 else ""
+    total_minutes = int(abs(decimal_value) * Decimal(60))
+    degrees, minutes = divmod(total_minutes, 60)
+    return f"{prefix}{degrees}°{minutes:02d}′"
 
 
 def _label(mapping: dict[str, str], value: Any) -> str:
@@ -98,7 +97,7 @@ class MarkdownChartSummaryRenderer:
                 state = "—"
             lines.append(
                 f"| {_cell(_label(POINT_LABELS, name))} | {_cell(_label(SIGN_LABELS, point.get('sign')))} "
-                f"| {format_dms(point.get('position', 0))} | {_cell(_label(HOUSE_LABELS, point.get('house')))} | {state} |"
+                f"| {format_dm(point.get('position', 0))} | {_cell(_label(HOUSE_LABELS, point.get('house')))} | {state} |"
             )
 
         lines.extend([
@@ -114,7 +113,7 @@ class MarkdownChartSummaryRenderer:
             if point := subject_points.get(name):
                 lines.append(
                     f"| {HOUSE_LABELS[name]} | {_cell(_label(SIGN_LABELS, point.get('sign')))} "
-                    f"| {format_dms(point.get('position', 0))} |"
+                    f"| {format_dm(point.get('position', 0))} |"
                 )
 
         point_names = set(point_order)
@@ -134,7 +133,7 @@ class MarkdownChartSummaryRenderer:
                 f"| {_cell(_label(POINT_LABELS, aspect.get('p1_name')))} "
                 f"| {_cell(_label(ASPECT_LABELS, aspect.get('aspect')))} "
                 f"| {_cell(_label(POINT_LABELS, aspect.get('p2_name')))} "
-                f"| {format_dms(aspect.get('orbit', 0))} | {movement} |"
+                f"| {format_dm(aspect.get('orbit', 0))} | {movement} |"
             )
 
         lines.extend([

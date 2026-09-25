@@ -1,7 +1,9 @@
+import { ofetch } from 'ofetch'
+
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   try {
-    return await $fetch(`${useRuntimeConfig().apiBase}/clients`, {
+    return await ofetch(`${useRuntimeConfig().apiBase}/clients`, {
       query: {
         search: typeof query.search === 'string' && query.search ? query.search : undefined,
         sign: typeof query.sign === 'string' && query.sign ? query.sign : undefined,

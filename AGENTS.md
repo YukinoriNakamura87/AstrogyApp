@@ -53,9 +53,15 @@ docker compose up --build
  
 # ログ確認
 docker compose logs -f backend
+
+# フロントエンドの自動テスト・型検査・本番ビルド
+docker compose exec frontend npm test
+docker compose exec frontend npm run typecheck
+docker compose exec frontend npm run build
+
+# バックエンドの自動テスト
+docker compose exec backend python -m unittest discover -s tests -v
 ```
- 
-※ 詳細なコマンドはPhase 0完了後にここへ追記する
  
 ## 開発方針
  
@@ -66,8 +72,8 @@ docker compose logs -f backend
 ## 実装フェーズ（現在地）
  
 - [x] Phase 0: Docker環境構築
-- [ ] Phase 1: バックエンド基盤（DBスキーマ・Kerykeion連携・CRUD API）
-- [ ] Phase 2: フロントエンド実装（登録フォーム＋セッション画面）
+- [x] Phase 1: バックエンド基盤（DBスキーマ・Kerykeion連携・CRUD API）
+- [x] Phase 2: フロントエンド実装（登録フォーム＋チャート詳細・解釈メモ）
 - [ ] Phase 3: 拡張（一覧・検索・トランジット・辞書連携）
 - [ ] Phase 4: 認証・調整・将来のサービス化検討
 **最初の縦串（MVPの中の最小スコープ）：**
@@ -80,6 +86,10 @@ docker compose logs -f backend
   - セッション記録：セッションごとに独立して蓄積（上書きしない）
 - **チャート計算結果はDBにキャッシュ**（再計算不要の設計）
 - **解釈辞書はクライアント非依存**のナレッジベースとして独立
+- **ネイタルはチャートの種類、Baseはセッション上の役割として分離する**
+  - 内部設計では特定のチャート種別を基準に固定せず、人物の出生図だけでなく事件・事象等のチャートも将来Base Chartにできる構造とする
 - **UIテーマは深紺×ゴールド**（確認済みモックアップに準拠）
 - **Phase 1ではAI機能を搭載しない**（ツールとしての堅牢性を優先）
- 
+
+## 表記仕様
+* 度数は明示的な指定や目的がない限りは、基本的に度分表記（例：12°50′）で統一する。

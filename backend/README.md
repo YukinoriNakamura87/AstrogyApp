@@ -43,6 +43,8 @@ docker compose exec backend alembic check
 - `GET /clients/{id}`：基本情報と保存済みネイタルチャートを返します。
 - `POST /clients`：氏名、出生年月日・時刻、出生地、緯度・経度、IANA タイムゾーンを登録します。
 - `GET /clients/{id}/chart`：初回のみ Kerykeion でネイタルチャートを計算し、以後は DB に保存した結果を返します。
+- `GET /clients/{id}/chart/memos`：天体ごとの保存済みチャート解釈メモを返します。
+- `PUT /clients/{id}/chart/memos`：指定した天体の解釈メモを上書きします。空文字を指定するとその天体のメモを削除します。
 - `GET /clients/{id}/chart/lilly-score`：保存済みチャートを独立ライブラリへ渡し、リリー式採点結果を返します。
 - `GET /clients/{id}/chart/summary`：保存済みチャートをMarkdown形式で返します。
 

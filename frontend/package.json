@@ -6,9 +6,18 @@
     "dev": "nuxt dev --host 0.0.0.0 --port 3000",
     "build": "nuxt build",
     "generate": "nuxt generate",
-    "preview": "nuxt preview"
+    "preview": "nuxt preview",
+    "test": "vitest run",
+    "typecheck": "nuxi typecheck"
   },
   "dependencies": {
-    "nuxt": "^3.12.0"
+    "nuxt": "^3.21.10",
+    "ofetch": "^1.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
   }
 }

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import type { ClientProfileResponse, LillyScoreResponse } from '~/types/client'
+import type { ChartInterpretationMemo, ChartMemosResponse, ClientProfileResponse, LillyScoreResponse } from '~/types/client'
+import { formatDegreeMinutes as degree } from '~/utils/angle'
+import { readableApiError } from '~/utils/api-error'
 
 type ChartPoint = {
   name: string
@@ -25,11 +27,21 @@ type ChartAspect = {
 const route = useRoute()
 const clientId = String(route.params.id)
 const { data, status, error, refresh } = await useFetch<ClientProfileResponse>(`/api/clients/${clientId}`)
-const { data: lillyScore, status: lillyStatus, error: lillyError } = await useFetch<LillyScoreResponse>(`/api/clients/${clientId}/chart/lilly-score`)
+const { data: lillyScore, status: lillyStatus, error: lillyError, refresh: refreshLilly } = await useFetch<LillyScoreResponse>(`/api/clients/${clientId}/chart/lilly-score`, {
+  immediate: Boolean(data.value?.chart),
+})
+const { data: memoData, status: memoStatus, error: memoError, refresh: refreshMemos } = await useFetch<ChartMemosResponse>(`/api/clients/${clientId}/chart/memos`, {
+  immediate: Boolean(data.value?.chart),
+})
 const calculating = ref(false)
-const calculationError = ref('')
+const calculationError = ref(route.query.chart === 'failed' ? '登録は完了しましたが、チャート計算に失敗しました。もう一度お試しください。' : '')
 const exporting = ref(false)
 const exportNotice = ref('')
+const selectedMemoPoint = ref('Sun')
+const memoDrafts = reactive<Record<string, string>>({})
+const savedMemoContents = reactive<Record<string, string>>({})
+const savingMemo = ref(false)
+const memoNotice = ref('')
 
 useHead({ title: computed(() => data.value ? `${data.value.client.name} | Astrolabe` : 'クライアント詳細 | Astrolabe') })
 
@@ -61,7 +73,7 @@ const aspectPointNames = new Set([...primaryOrder, 'Ascendant', 'Medium_Coeli'])
 
 const subject = computed(() => (data.value?.chart?.calculation.subject || {}) as Record<string, unknown>)
 const allPoints = computed(() => Object.values(subject.value).filter((item): item is ChartPoint => !!item && typeof item === 'object' && 'point_type' in item))
-const pointByName = computed(() => new Map(allPoints.value.map(point => [point.name, point])))
+const pointByName = computed<Map<string, ChartPoint>>(() => new Map(allPoints.value.map((point: ChartPoint) => [point.name, point])))
 const primaryPoints = computed(() => primaryOrder.map(name => pointByName.value.get(name)).filter((point): point is ChartPoint => !!point))
 const houses = computed(() => houseOrder.map(name => pointByName.value.get(name)).filter((point): point is ChartPoint => !!point))
 const majorAspects = computed(() => ((data.value?.chart?.calculation.aspects || []) as unknown as ChartAspect[])
@@ -71,24 +83,86 @@ const bigThree = computed(() => [pointByName.value.get('Sun'), pointByName.value
 const elementDistribution = computed(() => data.value?.chart?.calculation.element_distribution || {})
 const qualityDistribution = computed(() => data.value?.chart?.calculation.quality_distribution || {})
 
+watch(memoData, (response: ChartMemosResponse | null | undefined) => {
+  if (!response) return
+  for (const name of primaryOrder) {
+    const content = response.items.find((item: ChartInterpretationMemo) => item.planet === name)?.content || ''
+    memoDrafts[name] = content
+    savedMemoContents[name] = content
+  }
+}, { immediate: true })
+
+const selectedMemoContent = computed({
+  get: () => memoDrafts[selectedMemoPoint.value] || '',
+  set: (value: string) => { memoDrafts[selectedMemoPoint.value] = value },
+})
+const selectedMemoSaved = computed(() => Boolean(savedMemoContents[selectedMemoPoint.value]))
+const selectedMemoDirty = computed(() => selectedMemoContent.value !== (savedMemoContents[selectedMemoPoint.value] || ''))
+const hasUnsavedMemo = computed(() => primaryOrder.some(name => (memoDrafts[name] || '') !== (savedMemoContents[name] || '')))
+const selectedMemoUpdatedAt = computed(() => memoData.value?.items.find(item => item.planet === selectedMemoPoint.value)?.updated_at || null)
+
+function confirmUnsavedMemo(): boolean {
+  return !hasUnsavedMemo.value || !import.meta.client || window.confirm('保存されていない解釈メモがあります。変更を破棄して移動しますか？')
+}
+
+function selectMemoPoint(name: string) {
+  if (name === selectedMemoPoint.value || savingMemo.value) return
+  if (!confirmUnsavedMemo()) return
+  memoDrafts[selectedMemoPoint.value] = savedMemoContents[selectedMemoPoint.value] || ''
+  selectedMemoPoint.value = name
+  memoNotice.value = ''
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!hasUnsavedMemo.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+onBeforeRouteLeave(() => confirmUnsavedMemo())
+
 const sign = (value: string) => signLabels[value] || value
 const pointName = (value: string) => pointLabels[value] || value.replaceAll('_', ' ')
 const house = (value: string | null | undefined) => value ? houseLabels[value] || value.replaceAll('_', ' ') : '—'
-const degree = (value: number) => `${Math.floor(value)}° ${String(Math.floor((value % 1) * 60)).padStart(2, '0')}′`
 const signedScore = (value: number) => value > 0 ? `+${value}` : String(value)
 const date = (value: string) => new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${value}T00:00:00`))
 const time = (value: string | null) => value ? value.slice(0, 5) : '不明'
+const dateTime = (value: string) => new Intl.DateTimeFormat('ja-JP', {
+  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+}).format(new Date(value))
 
 async function calculateChart() {
+  if (calculating.value) return
   calculationError.value = ''
   calculating.value = true
   try {
     await $fetch(`/api/clients/${clientId}/chart`)
     await refresh()
+    await Promise.all([refreshMemos(), refreshLilly()])
   } catch (err: any) {
     calculationError.value = err?.data?.data?.detail || 'チャートを作成できませんでした。'
   } finally {
     calculating.value = false
+  }
+}
+
+async function saveSelectedMemo() {
+  if (savingMemo.value || !selectedMemoDirty.value) return
+  savingMemo.value = true
+  memoNotice.value = ''
+  try {
+    const response = await $fetch<ChartMemosResponse>(`/api/clients/${clientId}/chart/memos`, {
+      method: 'PUT',
+      body: { memos: [{ planet: selectedMemoPoint.value, content: selectedMemoContent.value }] },
+    })
+    memoData.value = response
+    memoNotice.value = selectedMemoContent.value.trim() ? 'メモを保存しました。' : 'メモを削除しました。'
+  } catch (error) {
+    memoNotice.value = readableApiError(error, 'メモを保存できませんでした。')
+  } finally {
+    savingMemo.value = false
   }
 }
 
@@ -97,6 +171,7 @@ async function fetchChartSummary() {
 }
 
 async function downloadSummary() {
+  if (exporting.value) return
   exporting.value = true
   exportNotice.value = ''
   try {
@@ -117,6 +192,7 @@ async function downloadSummary() {
 }
 
 async function copySummary() {
+  if (exporting.value) return
   exporting.value = true
   exportNotice.value = ''
   try {
@@ -152,6 +228,8 @@ async function copySummary() {
         </article>
       </section>
 
+      <NatalChartWheel v-if="data.chart" :calculation="data.chart.calculation" />
+
       <section class="profile-layout">
         <div class="profile-main">
           <div class="content-panel detail-section">
@@ -167,14 +245,68 @@ async function copySummary() {
 
           <template v-if="data.chart">
             <div class="content-panel chart-export-panel">
-              <div><p class="eyebrow">CHART SUMMARY</p><h2>チャート情報のまとめ</h2><p>度分秒・在室ハウスを含むMarkdown形式で、AIへの共有にも使えます。</p><small v-if="exportNotice" role="status">{{ exportNotice }}</small></div>
+              <div><p class="eyebrow">CHART SUMMARY</p><h2>チャート情報のまとめ</h2><p>度分・在室ハウスを含むMarkdown形式で、AIへの共有にも使えます。</p><small v-if="exportNotice" role="status">{{ exportNotice }}</small></div>
               <div class="chart-export-actions"><button class="button button-secondary" :disabled="exporting" @click="copySummary">コピー</button><button class="button button-primary" :disabled="exporting" @click="downloadSummary"><span v-if="exporting" class="spinner" />Markdown出力</button></div>
+            </div>
+
+            <div id="interpretation-memos" class="content-panel detail-section memo-panel">
+              <div class="panel-heading">
+                <div><p class="eyebrow">INTERPRETATION MEMOS</p><h2>チャート解釈メモ</h2></div>
+                <div class="memo-heading-status"><span v-if="hasUnsavedMemo" class="unsaved-badge">未保存</span><span class="result-count">{{ Object.values(savedMemoContents).filter(Boolean).length }} / {{ primaryPoints.length }} 天体</span></div>
+              </div>
+              <div v-if="memoStatus === 'pending'" class="memo-loading"><span class="spinner" />メモを読み込んでいます</div>
+              <div v-else-if="memoError" class="memo-loading memo-error"><span>メモを取得できませんでした。</span><button class="button button-secondary" @click="refreshMemos()">再読み込み</button></div>
+              <div v-else class="memo-workspace">
+                <nav class="memo-point-list" aria-label="メモ対象の天体">
+                  <button
+                    v-for="point in primaryPoints"
+                    :key="point.name"
+                    type="button"
+                    :class="{ active: selectedMemoPoint === point.name }"
+                    :disabled="savingMemo"
+                    @click="selectMemoPoint(point.name)"
+                  >
+                    <span class="memo-point-glyph">{{ point.emoji || '✦' }}</span>
+                    <span>{{ pointName(point.name) }}</span>
+                    <i v-if="savedMemoContents[point.name]" aria-label="保存済み" />
+                  </button>
+                </nav>
+                <div class="memo-editor">
+                  <div class="memo-editor-heading">
+                    <div><small>{{ selectedMemoSaved ? '保存済みの解釈' : '新しい解釈' }}</small><h3>{{ pointName(selectedMemoPoint) }}</h3></div>
+                    <time v-if="selectedMemoUpdatedAt" :datetime="selectedMemoUpdatedAt">最終更新 {{ dateTime(selectedMemoUpdatedAt) }}</time>
+                  </div>
+                  <textarea
+                    v-model="selectedMemoContent"
+                    maxlength="20000"
+                    :aria-label="`${pointName(selectedMemoPoint)}の解釈メモ`"
+                    placeholder="チャートを読みながら、象徴・解釈・鑑定で伝えたい内容を記録します。"
+                    :disabled="savingMemo"
+                    @keydown.meta.enter.prevent="saveSelectedMemo"
+                    @keydown.ctrl.enter.prevent="saveSelectedMemo"
+                  />
+                  <div class="memo-editor-footer">
+                    <span :class="{ error: memoNotice.includes('できません') }" role="status">{{ memoNotice }}</span>
+                    <small>{{ selectedMemoContent.length.toLocaleString() }} / 20,000</small>
+                    <button class="button button-primary" :disabled="savingMemo || !selectedMemoDirty" @click="saveSelectedMemo">
+                      <span v-if="savingMemo" class="spinner" />{{ savingMemo ? '保存中' : 'この天体のメモを保存' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-panel detail-section">
+              <div class="panel-heading"><div><p class="eyebrow">PLANETS</p><h2>主要天体</h2></div><span class="result-count">Kerykeion {{ data.chart.calculation_version }}</span></div>
+              <div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>天体</th><th>サイン</th><th>度数</th><th>ハウス</th><th>状態</th></tr></thead><tbody>
+                <tr v-for="point in primaryPoints" :key="point.name"><td><span class="table-glyph">{{ point.emoji }}</span>{{ pointName(point.name) }}</td><td>{{ sign(point.sign) }}</td><td>{{ degree(point.position) }}</td><td>{{ house(point.house) }}</td><td><span v-if="point.retrograde" class="retrograde">逆行</span><span v-else>順行</span></td></tr>
+              </tbody></table></div>
             </div>
 
             <div class="content-panel detail-section lilly-panel">
               <div class="panel-heading"><div><p class="eyebrow">LILLY SCORE</p><h2>リリー式採点</h2></div><span v-if="lillyScore" class="sect-badge">{{ lillyScore.sect === 'day' ? '昼チャート' : '夜チャート' }}</span></div>
               <div v-if="lillyStatus === 'pending'" class="lilly-loading"><span class="spinner" />採点しています</div>
-              <div v-else-if="lillyError || !lillyScore" class="lilly-error">採点結果を取得できませんでした。</div>
+              <div v-else-if="lillyError || !lillyScore" class="lilly-error"><span>採点結果を取得できませんでした。</span><button class="button button-secondary" @click="refreshLilly()">再読み込み</button></div>
               <template v-else>
                 <div class="lilly-totals">
                   <div><small>エッセンシャル</small><strong :class="{ negative: lillyScore.essential_total < 0 }">{{ signedScore(lillyScore.essential_total) }}</strong></div>
@@ -195,13 +327,6 @@ async function copySummary() {
             </div>
 
             <div class="content-panel detail-section">
-              <div class="panel-heading"><div><p class="eyebrow">PLANETS</p><h2>主要天体</h2></div><span class="result-count">Kerykeion {{ data.chart.calculation_version }}</span></div>
-              <div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>天体</th><th>サイン</th><th>度数</th><th>ハウス</th><th>状態</th></tr></thead><tbody>
-                <tr v-for="point in primaryPoints" :key="point.name"><td><span class="table-glyph">{{ point.emoji }}</span>{{ pointName(point.name) }}</td><td>{{ sign(point.sign) }}</td><td>{{ degree(point.position) }}</td><td>{{ house(point.house) }}</td><td><span v-if="point.retrograde" class="retrograde">逆行</span><span v-else>順行</span></td></tr>
-              </tbody></table></div>
-            </div>
-
-            <div class="content-panel detail-section">
               <div class="panel-heading"><div><p class="eyebrow">HOUSES</p><h2>ハウスカスプ</h2></div></div>
               <div class="house-grid"><article v-for="item in houses" :key="item.name"><small>{{ house(item.name) }}</small><strong>{{ item.emoji }} {{ sign(item.sign) }}</strong><span>{{ degree(item.position) }}</span></article></div>
             </div>
@@ -210,7 +335,7 @@ async function copySummary() {
               <div class="panel-heading"><div><p class="eyebrow">ASPECTS</p><h2>主要アスペクト</h2></div><span class="result-count">{{ majorAspects.length }}件</span></div>
               <div class="aspect-list">
                 <article v-for="(aspect, index) in majorAspects" :key="`${aspect.p1_name}-${aspect.p2_name}-${index}`">
-                  <span>{{ pointName(aspect.p1_name) }}</span><strong class="aspect-symbol">{{ aspectSymbols[aspect.aspect] || '·' }}</strong><span>{{ pointName(aspect.p2_name) }}</span><small>{{ aspectLabels[aspect.aspect] || aspect.aspect }} · オーブ {{ aspect.orbit.toFixed(2) }}° · {{ aspect.aspect_movement === 'Applying' ? '接近' : '分離' }}</small>
+                  <span>{{ pointName(aspect.p1_name) }}</span><strong class="aspect-symbol">{{ aspectSymbols[aspect.aspect] || '·' }}</strong><span>{{ pointName(aspect.p2_name) }}</span><small>{{ aspectLabels[aspect.aspect] || aspect.aspect }} · オーブ {{ degree(aspect.orbit) }} · {{ aspect.aspect_movement === 'Applying' ? '接近' : '分離' }}</small>
                 </article>
               </div>
             </div>

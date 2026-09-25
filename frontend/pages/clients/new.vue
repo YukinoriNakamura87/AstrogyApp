@@ -1,7 +1,7 @@
 <script setup lang="ts">
-type Point = { name: string; point_type: string; sign?: string; position?: number; house?: string | null; retrograde?: boolean | null }
-type Aspect = { p1_name: string; p2_name: string; aspect: string; orbit: number }
-type Chart = { client_id: number; calculation_version: string; calculation: { subject: Record<string, unknown>; aspects: Aspect[]; [key: string]: unknown } }
+import { readableApiError } from '~/utils/api-error'
+import { clientDetailLocation, registerClientAndPrepareChart, type ApiFetch } from '~/utils/client-registration'
+
 type BirthPlace = {
   id: string
   name: string
@@ -24,13 +24,10 @@ const locationResults = ref<BirthPlace[]>([])
 const locationError = ref('')
 const searchingLocation = ref(false)
 const manualLocation = ref(false)
-const chart = ref<Chart | null>(null)
 const errorMessage = ref('')
 const loading = ref(false)
-const points = computed(() => Object.values(chart.value?.calculation.subject || {}).filter((value): value is Point => !!value && typeof value === 'object' && 'point_type' in value && value.point_type === 'AstrologicalPoint'))
-const houses = computed(() => Object.values(chart.value?.calculation.subject || {}).filter((value): value is Point => !!value && typeof value === 'object' && 'point_type' in value && value.point_type === 'House'))
 
-watch(locationQuery, (value) => {
+watch(locationQuery, (value: string) => {
   if (selectedLocation.value && value !== selectedLocation.value.display_name) {
     selectedLocation.value = null
     form.birth_place = ''
@@ -40,14 +37,8 @@ watch(locationQuery, (value) => {
   }
 })
 
-function readableError(error: any): string {
-  const detail = error?.data?.data?.detail || error?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) return detail.map(item => `${item.loc?.join('.')}: ${item.msg}`).join(' / ')
-  return error?.message || '通信に失敗しました。'
-}
-
 async function searchLocations() {
+  if (searchingLocation.value || loading.value) return
   locationError.value = ''
   locationResults.value = []
   const query = locationQuery.value.trim()
@@ -61,7 +52,7 @@ async function searchLocations() {
     locationResults.value = response.items
     if (!response.items.length) locationError.value = '候補が見つかりませんでした。市区町村名を変えてお試しください。'
   } catch (error) {
-    locationError.value = readableError(error)
+    locationError.value = readableApiError(error, '出生地を検索できませんでした。')
   } finally {
     searchingLocation.value = false
   }
@@ -84,27 +75,30 @@ function enableManualLocation() {
 }
 
 async function calculate() {
+  if (loading.value) return
   errorMessage.value = ''
-  chart.value = null
   if (!form.birth_latitude || !form.birth_longitude || !form.birth_timezone) {
     errorMessage.value = '出生地を検索して候補を選択するか、詳細設定から位置情報を入力してください。'
     return
   }
   loading.value = true
   try {
-    const client = await $fetch<{ id: number }>('/api/clients', {
-      method: 'POST',
-      body: { ...form, birth_latitude: Number(form.birth_latitude), birth_longitude: Number(form.birth_longitude), birth_time: form.birth_time ? `${form.birth_time}:00` : null },
-    })
-    chart.value = await $fetch<Chart>(`/api/clients/${client.id}/chart`)
+    const result = await registerClientAndPrepareChart(
+      $fetch as unknown as ApiFetch,
+      {
+        ...form,
+        birth_latitude: Number(form.birth_latitude),
+        birth_longitude: Number(form.birth_longitude),
+        birth_time: form.birth_time ? `${form.birth_time}:00` : null,
+      },
+    )
+    await navigateTo(clientDetailLocation(result))
   } catch (error) {
-    errorMessage.value = readableError(error)
+    errorMessage.value = readableApiError(error, 'クライアントを登録できませんでした。')
   } finally {
     loading.value = false
   }
 }
-
-const formatted = (value: number | null | undefined) => typeof value === 'number' ? value.toFixed(2) : '—'
 </script>
 
 <template>
@@ -116,22 +110,22 @@ const formatted = (value: number | null | undefined) => typeof value === 'number
 
     <section class="content-panel form-panel">
       <div class="section-title"><span>01</span><div><h2>基本情報・出生情報</h2><p>出生地を検索すると、チャート計算に必要な座標とタイムゾーンが自動入力されます。</p></div></div>
-      <form class="form-grid" @submit.prevent="calculate">
-        <label class="field field-wide"><span>お名前</span><input v-model.trim="form.name" name="name" required maxlength="200" autocomplete="name" placeholder="例：山田 花子"></label>
-        <label class="field"><span>生年月日</span><input v-model="form.birth_date" name="birth_date" required type="date"></label>
-        <label class="field"><span>出生時刻</span><input v-model="form.birth_time" name="birth_time" required type="time"><small>不明な場合は登録後のチャート計算ができません</small></label>
+      <form class="form-grid" :aria-busy="loading" @submit.prevent="calculate">
+        <label class="field field-wide"><span>お名前</span><input v-model.trim="form.name" name="name" required maxlength="200" autocomplete="name" placeholder="例：山田 花子" :disabled="loading"></label>
+        <label class="field"><span>生年月日</span><input v-model="form.birth_date" name="birth_date" required type="date" :disabled="loading"></label>
+        <label class="field"><span>出生時刻</span><input v-model="form.birth_time" name="birth_time" required type="time" :disabled="loading"><small>不明な場合は登録後のチャート計算ができません</small></label>
 
         <div class="field field-wide location-field">
           <span>出生地 <small>（ローマ字）</small></span>
           <div class="location-search">
-            <input v-model="locationQuery" required maxlength="200" placeholder="例：Moriyama, Shiga" autocomplete="off" @keydown.enter.prevent="searchLocations">
-            <button type="button" class="button button-secondary" :disabled="searchingLocation" @click="searchLocations">
+            <input v-model="locationQuery" required maxlength="200" placeholder="例：Moriyama, Shiga" autocomplete="off" :disabled="loading" @keydown.enter.prevent="searchLocations">
+            <button type="button" class="button button-secondary" :disabled="searchingLocation || loading" @click="searchLocations">
               <span v-if="searchingLocation" class="spinner" />{{ searchingLocation ? '検索中' : '検索' }}
             </button>
           </div>
           <p v-if="locationError" class="location-error" role="alert">{{ locationError }}</p>
           <div v-if="locationResults.length" class="location-results" role="listbox" aria-label="出生地の検索候補">
-            <button v-for="place in locationResults" :key="place.id" type="button" role="option" @click="chooseLocation(place)">
+            <button v-for="place in locationResults" :key="place.id" type="button" role="option" :disabled="loading" @click="chooseLocation(place)">
               <span class="place-pin">⌖</span>
               <span class="place-copy"><strong>{{ place.display_name }}</strong><small>{{ place.latitude }}, {{ place.longitude }} · {{ place.timezone }}</small></span>
               <span class="choose-label">選択</span>
@@ -143,34 +137,22 @@ const formatted = (value: number | null | undefined) => typeof value === 'number
           </div>
           <div class="location-help">
             <small>位置情報：</small><a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo / GeoNames</a>
-            <button type="button" @click="enableManualLocation">{{ manualLocation ? '詳細設定を閉じる' : '座標を手動入力' }}</button>
+            <button type="button" :disabled="loading" @click="enableManualLocation">{{ manualLocation ? '詳細設定を閉じる' : '座標を手動入力' }}</button>
           </div>
         </div>
 
         <div v-if="manualLocation" class="manual-location field-wide">
-          <label class="field field-wide"><span>保存する出生地名</span><input v-model.trim="form.birth_place" required maxlength="255" placeholder="例：滋賀県守山市"></label>
-          <label class="field"><span>緯度</span><input v-model="form.birth_latitude" required type="number" step="0.000001" min="-90" max="90" placeholder="35.0589"></label>
-          <label class="field"><span>経度</span><input v-model="form.birth_longitude" required type="number" step="0.000001" min="-180" max="180" placeholder="135.9944"></label>
-          <label class="field field-wide"><span>タイムゾーン</span><input v-model.trim="form.birth_timezone" required placeholder="Asia/Tokyo"></label>
+          <label class="field field-wide"><span>保存する出生地名</span><input v-model.trim="form.birth_place" required maxlength="255" placeholder="例：滋賀県守山市" :disabled="loading"></label>
+          <label class="field"><span>緯度</span><input v-model="form.birth_latitude" required type="number" step="0.000001" min="-90" max="90" placeholder="35.0589" :disabled="loading"></label>
+          <label class="field"><span>経度</span><input v-model="form.birth_longitude" required type="number" step="0.000001" min="-180" max="180" placeholder="135.9944" :disabled="loading"></label>
+          <label class="field field-wide"><span>タイムゾーン</span><input v-model.trim="form.birth_timezone" required placeholder="Asia/Tokyo" :disabled="loading"></label>
         </div>
 
         <div class="form-footer field-wide">
           <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
-          <button type="submit" class="button button-primary submit-button" :disabled="loading"><span v-if="loading" class="spinner" />{{ loading ? '計算しています' : '登録してチャートを作成' }}</button>
+          <button type="submit" class="button button-primary submit-button" :disabled="loading"><span v-if="loading" class="spinner" />{{ loading ? '登録・計算しています' : '登録してチャートを作成' }}</button>
         </div>
       </form>
     </section>
-
-    <template v-if="chart">
-      <section class="success-banner"><span>✓</span><div><strong>クライアントとチャートを登録しました</strong><p>クライアントID {{ chart.client_id }} · Kerykeion {{ chart.calculation_version }}</p></div></section>
-      <section class="content-panel chart-results">
-        <div class="panel-heading"><div><p class="eyebrow">NATAL CHART</p><h2>チャート計算結果</h2></div><span class="result-count">天体 {{ points.length }} · ハウス {{ houses.length }} · アスペクト {{ chart.calculation.aspects.length }}</span></div>
-        <div class="result-tabs">
-          <div><h3>天体・感受点</h3><div class="table-wrap"><table><thead><tr><th>天体</th><th>サイン</th><th>度数</th><th>ハウス</th><th>逆行</th></tr></thead><tbody><tr v-for="point in points" :key="point.name"><td>{{ point.name }}</td><td>{{ point.sign || '—' }}</td><td>{{ formatted(point.position) }}</td><td>{{ point.house || '—' }}</td><td>{{ point.retrograde ? 'R' : '—' }}</td></tr></tbody></table></div></div>
-          <div><h3>ハウス</h3><div class="table-wrap"><table><thead><tr><th>カスプ</th><th>サイン</th><th>度数</th></tr></thead><tbody><tr v-for="house in houses" :key="house.name"><td>{{ house.name }}</td><td>{{ house.sign || '—' }}</td><td>{{ formatted(house.position) }}</td></tr></tbody></table></div></div>
-        </div>
-        <details class="raw-json"><summary>計算結果のJSONを表示</summary><pre>{{ JSON.stringify(chart, null, 2) }}</pre></details>
-      </section>
-    </template>
   </main>
 </template>

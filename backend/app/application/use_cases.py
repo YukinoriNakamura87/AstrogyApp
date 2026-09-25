@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from app.domain.entities import BirthPlaceCandidate, ChartSummary, Client, ClientOverview, ClientProfile, NatalChart
+from app.domain.entities import BirthPlaceCandidate, ChartInterpretationMemo, ChartSummary, Client, ClientOverview, ClientProfile, NatalChart
 from app.domain.repositories import ClientRepository
 from app.domain.services import ChartSummaryRenderer, GeocodingProvider, GeocodingProviderError, NatalChartCalculator
 from app.domain.services import LillyScoreCalculator
@@ -27,6 +27,12 @@ class LillyScoreCalculationError(Exception):
 
 class LocationSearchError(Exception):
     pass
+
+
+SUPPORTED_MEMO_POINTS = (
+    "Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
+    "Uranus", "Neptune", "Pluto", "Chiron", "True_North_Lunar_Node",
+)
 
 
 @dataclass(slots=True)
@@ -115,6 +121,45 @@ class GetOrCreateNatalChart:
                 "Birth time is required to calculate an accurate natal chart"
             )
         return self.clients.save_chart(self.calculator.calculate(client))
+
+
+@dataclass(slots=True)
+class GetChartInterpretationMemos:
+    clients: ClientRepository
+
+    def execute(self, client_id: int) -> list[ChartInterpretationMemo]:
+        if self.clients.get(client_id) is None:
+            raise ClientNotFoundError("Client not found")
+        if self.clients.get_chart(client_id) is None:
+            raise ChartNotFoundError("Natal chart has not been calculated")
+        return self.clients.list_chart_memos(client_id)
+
+
+@dataclass(slots=True)
+class UpdateChartInterpretationMemos:
+    clients: ClientRepository
+
+    def execute(
+        self, client_id: int, updates: list[tuple[str, str]]
+    ) -> list[ChartInterpretationMemo]:
+        if self.clients.get(client_id) is None:
+            raise ClientNotFoundError("Client not found")
+        chart = self.clients.get_chart(client_id)
+        if chart is None or chart.id is None:
+            raise ChartNotFoundError("Natal chart has not been calculated")
+
+        seen: set[str] = set()
+        memos: list[ChartInterpretationMemo] = []
+        for planet, content in updates:
+            if planet not in SUPPORTED_MEMO_POINTS:
+                raise ValueError(f"Unsupported memo point: {planet}")
+            if planet in seen:
+                raise ValueError(f"Duplicate memo point: {planet}")
+            seen.add(planet)
+            memos.append(ChartInterpretationMemo(
+                chart_id=chart.id, planet=planet, content=content.strip()
+            ))
+        return self.clients.upsert_chart_memos(client_id, memos)
 
 
 @dataclass(slots=True)

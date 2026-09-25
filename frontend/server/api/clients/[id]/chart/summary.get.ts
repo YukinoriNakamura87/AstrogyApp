@@ -1,3 +1,5 @@
+import { ofetch } from 'ofetch'
+
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id || !/^\d+$/.test(id)) {
@@ -5,7 +7,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const markdown = await $fetch<string>(`${useRuntimeConfig().apiBase}/clients/${id}/chart/summary`)
+    const markdown = await ofetch<string>(`${useRuntimeConfig().apiBase}/clients/${id}/chart/summary`)
     setResponseHeader(event, 'content-type', 'text/markdown; charset=utf-8')
     return markdown
   } catch (error: any) {

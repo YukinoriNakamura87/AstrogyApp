@@ -51,6 +51,16 @@ export type ClientProfileResponse = {
   chart: NatalChart | null
 }
 
+export type ChartInterpretationMemo = {
+  id: number
+  planet: string
+  content: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type ChartMemosResponse = { items: ChartInterpretationMemo[] }
+
 export type LillyScoreItem = {
   code: string
   label: string

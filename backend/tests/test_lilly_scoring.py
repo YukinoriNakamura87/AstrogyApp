@@ -69,6 +69,18 @@ class LillyScoringTests(TestCase):
         self.assertIn("cazimi", codes)
         self.assertNotIn("combust", codes)
 
+    def test_under_sunbeams_explains_cross_sign_combust_rejection(self):
+        result = score_chart(complete({
+            P.SUN: (29.9, 8, False, .99),
+            P.MOON: (30.75, 8, False, 13.2),
+        }))
+        moon = next(item for item in result.planets if item.planet == P.MOON)
+        solar_condition = next(
+            item for item in moon.accidental.items if item.code == "under_sunbeams"
+        )
+        self.assertEqual(solar_condition.points, -4)
+        self.assertIn("太陽とはサイン違いのためコンバスト不成立", solar_condition.description)
+
     def test_oriental_occidental_is_omitted_within_one_degree(self):
         result = score_chart(complete({P.SUN: (30, 7, False, .99), P.MERCURY: (29, 9, False, 1.1)}))
         mercury = next(item for item in result.planets if item.planet == P.MERCURY)
@@ -93,9 +105,30 @@ class LillyScoringTests(TestCase):
         moon_orientation = next(item for item in moon.accidental.items if item.code == "occidental")
         mercury_orientation = next(item for item in mercury.accidental.items if item.code == "oriental")
         self.assertEqual(moon_orientation.points, 2)
-        self.assertIn("41.998300°", moon_orientation.description)
+        self.assertIn("41°59′", moon_orientation.description)
         self.assertEqual(mercury_orientation.points, -2)
-        self.assertIn("341.936984°", mercury_orientation.description)
+        self.assertIn("341°56′", mercury_orientation.description)
+
+    def test_score_descriptions_do_not_use_decimal_degrees(self):
+        result = score_chart(complete({
+            P.SUN: (29.9, 8, False, .985556),
+            P.MOON: (30.748204791, 8, False, 13.743411),
+        }))
+        descriptions = [
+            item.description
+            for planet_score in result.planets
+            for section in (planet_score.essential, planet_score.accidental)
+            for item in section.items
+        ]
+        self.assertTrue(any("0°50′" in description for description in descriptions))
+        for description in descriptions:
+            self.assertNotRegex(description, r"\d+\.\d+°")
+
+    def test_daily_motion_uses_degree_minute_second_format(self):
+        result = score_chart(complete({P.SATURN: (190, 1, False, .04)}))
+        saturn = next(item for item in result.planets if item.planet == P.SATURN)
+        speed = next(item for item in saturn.accidental.items if item.code == "fast")
+        self.assertEqual(speed.description, "日運動 0°02′24″ > 平均 0°02′01″")
 
     def test_missing_fixed_stars_are_explicitly_unavailable(self):
         result = score_chart(complete(fixed_stars={}))

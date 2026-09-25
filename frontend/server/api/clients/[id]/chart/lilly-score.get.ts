@@ -1,3 +1,5 @@
+import { ofetch } from 'ofetch'
+
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id || !/^\d+$/.test(id)) {
@@ -5,7 +7,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    return await $fetch(`${useRuntimeConfig().apiBase}/clients/${id}/chart/lilly-score`)
+    return await ofetch(`${useRuntimeConfig().apiBase}/clients/${id}/chart/lilly-score`)
   } catch (error: any) {
     throw createError({
       statusCode: error.response?.status || 502,

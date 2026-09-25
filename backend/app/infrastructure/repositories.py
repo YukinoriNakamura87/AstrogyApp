@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.domain.entities import ChartSignature, Client, ClientOverview, NatalChart
+from app.domain.entities import ChartInterpretationMemo, ChartSignature, Client, ClientOverview, NatalChart
 from app.infrastructure import orm_models
 
 
@@ -24,6 +24,13 @@ def _chart_entity(row: orm_models.Chart) -> NatalChart:
         id=row.id, client_id=row.client_id, calculation=row.calculation,
         calculation_version=row.calculation_version,
         calculated_at=row.calculated_at,
+    )
+
+
+def _memo_entity(row: orm_models.ChartInterpretationMemo) -> ChartInterpretationMemo:
+    return ChartInterpretationMemo(
+        id=row.id, chart_id=row.chart_id, planet=row.planet, content=row.content,
+        created_at=row.created_at, updated_at=row.updated_at,
     )
 
 
@@ -109,6 +116,47 @@ class SqlAlchemyClientRepository:
         self.db.commit()
         self.db.refresh(row)
         return _chart_entity(row)
+
+    def list_chart_memos(self, client_id: int) -> list[ChartInterpretationMemo]:
+        rows = self.db.scalars(
+            select(orm_models.ChartInterpretationMemo)
+            .join(orm_models.Chart)
+            .where(orm_models.Chart.client_id == client_id)
+            .order_by(orm_models.ChartInterpretationMemo.id)
+        ).all()
+        return [_memo_entity(row) for row in rows]
+
+    def upsert_chart_memos(
+        self, client_id: int, memos: list[ChartInterpretationMemo]
+    ) -> list[ChartInterpretationMemo]:
+        chart_row = self.db.scalar(
+            select(orm_models.Chart).where(orm_models.Chart.client_id == client_id)
+        )
+        if chart_row is None:
+            return []
+
+        existing = {
+            row.planet: row
+            for row in self.db.scalars(
+                select(orm_models.ChartInterpretationMemo).where(
+                    orm_models.ChartInterpretationMemo.chart_id == chart_row.id
+                )
+            ).all()
+        }
+        for memo in memos:
+            row = existing.get(memo.planet)
+            if not memo.content:
+                if row is not None:
+                    self.db.delete(row)
+                continue
+            if row is None:
+                self.db.add(orm_models.ChartInterpretationMemo(
+                    chart_id=chart_row.id, planet=memo.planet, content=memo.content,
+                ))
+            else:
+                row.content = memo.content
+        self.db.commit()
+        return self.list_chart_memos(client_id)
 
     def rollback(self) -> None:
         self.db.rollback()

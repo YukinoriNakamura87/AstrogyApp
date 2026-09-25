@@ -7,11 +7,11 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    return await ofetch(`${useRuntimeConfig().apiBase}/clients/${id}`)
+    return await ofetch(`${useRuntimeConfig().apiBase}/clients/${id}/chart/memos`)
   } catch (error: any) {
     throw createError({
       statusCode: error.response?.status || 502,
-      statusMessage: error.response?.status === 404 ? 'Client not found' : 'Client loading failed',
+      statusMessage: 'Chart memos loading failed',
       data: error.data,
     })
   }

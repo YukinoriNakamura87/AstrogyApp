@@ -2,9 +2,9 @@ from datetime import date, time
 from decimal import Decimal
 from unittest import TestCase
 
-from app.application.use_cases import ChartCalculationError, ChartNotFoundError, ClientNotFoundError, ExportNatalChartSummary, GetClientProfile, GetDashboard, GetOrCreateNatalChart, ListClients, SearchBirthPlaces
-from app.domain.entities import BirthPlaceCandidate, ChartSignature, Client, ClientOverview, NatalChart
-from app.infrastructure.markdown_chart_summary import MarkdownChartSummaryRenderer, format_dms
+from app.application.use_cases import ChartCalculationError, ChartNotFoundError, ClientNotFoundError, ExportNatalChartSummary, GetChartInterpretationMemos, GetClientProfile, GetDashboard, GetOrCreateNatalChart, ListClients, SearchBirthPlaces, UpdateChartInterpretationMemos
+from app.domain.entities import BirthPlaceCandidate, ChartInterpretationMemo, ChartSignature, Client, ClientOverview, NatalChart
+from app.infrastructure.markdown_chart_summary import MarkdownChartSummaryRenderer, format_dm
 
 
 def client(client_id: int = 1, birth_time: time | None = time(12, 0)) -> Client:
@@ -21,6 +21,7 @@ class FakeRepository:
         self.item = item
         self.chart = chart
         self.saved = False
+        self.memos: list[ChartInterpretationMemo] = []
 
     def get(self, client_id: int, *, for_update: bool = False):
         return self.item if client_id == self.item.id else None
@@ -32,6 +33,17 @@ class FakeRepository:
         self.saved = True
         self.chart = chart
         return chart
+
+    def list_chart_memos(self, client_id: int):
+        return self.memos
+
+    def upsert_chart_memos(self, client_id: int, memos: list[ChartInterpretationMemo]):
+        for memo in memos:
+            self.memos = [item for item in self.memos if item.planet != memo.planet]
+            if memo.content:
+                memo.id = len(self.memos) + 1
+                self.memos.append(memo)
+        return self.memos
 
     def list_overviews(self, search=None):
         return [ClientOverview(self.item, self.chart is not None, ChartSignature("Leo", "Sag", "Sco"))]
@@ -83,6 +95,43 @@ class UseCaseTests(TestCase):
         with self.assertRaises(ChartCalculationError):
             GetOrCreateNatalChart(FakeRepository(client(birth_time=None)), FakeCalculator()).execute(1)
 
+    def test_chart_memos_require_cached_chart(self):
+        with self.assertRaises(ChartNotFoundError):
+            GetChartInterpretationMemos(FakeRepository(client())).execute(1)
+
+    def test_chart_memo_is_trimmed_and_upserted_per_planet(self):
+        cached = NatalChart(
+            id=10, client_id=1, calculation={}, calculation_version="cached"
+        )
+        repository = FakeRepository(client(), cached)
+        result = UpdateChartInterpretationMemos(repository).execute(
+            1, [("Sun", "  主体性が強い  ")]
+        )
+        self.assertEqual(result[0].planet, "Sun")
+        self.assertEqual(result[0].content, "主体性が強い")
+        self.assertEqual(result[0].chart_id, 10)
+
+    def test_empty_chart_memo_deletes_existing_content(self):
+        cached = NatalChart(
+            id=10, client_id=1, calculation={}, calculation_version="cached"
+        )
+        repository = FakeRepository(client(), cached)
+        repository.memos = [ChartInterpretationMemo(10, "Moon", "感情のメモ", id=1)]
+        result = UpdateChartInterpretationMemos(repository).execute(1, [("Moon", "   ")])
+        self.assertEqual(result, [])
+
+    def test_chart_memo_rejects_unsupported_or_duplicate_planets(self):
+        cached = NatalChart(
+            id=10, client_id=1, calculation={}, calculation_version="cached"
+        )
+        repository = FakeRepository(client(), cached)
+        with self.assertRaises(ValueError):
+            UpdateChartInterpretationMemos(repository).execute(1, [("Regulus", "memo")])
+        with self.assertRaises(ValueError):
+            UpdateChartInterpretationMemos(repository).execute(
+                1, [("Sun", "one"), ("Sun", "two")]
+            )
+
     def test_sign_filter_matches_any_big_three_position(self):
         result = ListClients(FakeRepository(client())).execute(sign="sco")
         self.assertEqual(len(result), 1)
@@ -109,7 +158,7 @@ class UseCaseTests(TestCase):
                 FakeRepository(client()), MarkdownChartSummaryRenderer()
             ).execute(1)
 
-    def test_markdown_summary_uses_dms_and_house(self):
+    def test_markdown_summary_uses_degree_minutes_and_house(self):
         cached = NatalChart(
             client_id=1,
             calculation={
@@ -134,6 +183,6 @@ class UseCaseTests(TestCase):
         summary = ExportNatalChartSummary(
             FakeRepository(client(), cached), MarkdownChartSummaryRenderer()
         ).execute(1)
-        self.assertIn("| 太陽 | 獅子座 | 14°23′45″ | 第9ハウス | 順行 |", summary.content)
-        self.assertIn("| 第1ハウス | 蠍座 | 7°20′19″ |", summary.content)
-        self.assertEqual(format_dms(1.9999), "2°00′00″")
+        self.assertIn("| 太陽 | 獅子座 | 14°23′ | 第9ハウス | 順行 |", summary.content)
+        self.assertIn("| 第1ハウス | 蠍座 | 7°20′ |", summary.content)
+        self.assertEqual(format_dm(1.9999), "1°59′")

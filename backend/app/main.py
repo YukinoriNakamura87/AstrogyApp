@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.application.use_cases import (
     CalculateLillyScore, ChartCalculationError, ChartNotFoundError, ClientNotFoundError,
     CreateClient, ExportNatalChartSummary, GetClientProfile, GetDashboard,
-    GetOrCreateNatalChart, LillyScoreCalculationError, ListClients, LocationSearchError,
-    SearchBirthPlaces,
+    GetChartInterpretationMemos, GetOrCreateNatalChart, LillyScoreCalculationError,
+    ListClients, LocationSearchError, SearchBirthPlaces, UpdateChartInterpretationMemos,
 )
 from app.db import SessionLocal
 from app.infrastructure.chart_calculator import KerykeionNatalChartCalculator
@@ -19,8 +19,9 @@ from app.infrastructure.lilly_score_adapter import CachedChartLillyScoreCalculat
 from app.infrastructure.repositories import SqlAlchemyClientRepository
 from app.presentation.schemas import (
     BirthPlaceCandidateResponse, BirthPlaceSearchResponse, ChartRead,
-    ClientCreateRequest, ClientDetailResponse, ClientListResponse, ClientProfileResponse,
-    ClientOverviewResponse, DashboardResponse, LillyScoreResponse,
+    ChartMemosResponse, ChartMemosUpdateRequest, ClientCreateRequest, ClientDetailResponse,
+    ClientListResponse, ClientProfileResponse, ClientOverviewResponse, DashboardResponse,
+    LillyScoreResponse, ChartInterpretationMemoResponse,
 )
 
 app = FastAPI(
@@ -135,6 +136,44 @@ def read_chart(
         client_id=chart.client_id,
         calculation_version=chart.calculation_version,
         calculation=chart.calculation,
+    )
+
+
+@app.get("/clients/{client_id}/chart/memos", response_model=ChartMemosResponse)
+def read_chart_memos(
+    client_id: int,
+    clients: SqlAlchemyClientRepository = Depends(get_clients),
+) -> ChartMemosResponse:
+    try:
+        memos = GetChartInterpretationMemos(clients).execute(client_id)
+    except ClientNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ChartNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ChartMemosResponse(
+        items=[ChartInterpretationMemoResponse.from_domain(memo) for memo in memos]
+    )
+
+
+@app.put("/clients/{client_id}/chart/memos", response_model=ChartMemosResponse)
+def update_chart_memos(
+    client_id: int,
+    payload: ChartMemosUpdateRequest,
+    clients: SqlAlchemyClientRepository = Depends(get_clients),
+) -> ChartMemosResponse:
+    try:
+        memos = UpdateChartInterpretationMemos(clients).execute(
+            client_id, [(memo.planet, memo.content) for memo in payload.memos]
+        )
+    except ClientNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ChartNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        clients.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ChartMemosResponse(
+        items=[ChartInterpretationMemoResponse.from_domain(memo) for memo in memos]
     )
 
 

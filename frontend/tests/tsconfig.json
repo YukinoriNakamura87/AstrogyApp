@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["./**/*.ts", "../utils/**/*.ts"]
+}

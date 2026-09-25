@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.domain.entities import BirthPlaceCandidate, Client, ClientOverview
+from app.domain.entities import BirthPlaceCandidate, ChartInterpretationMemo, Client, ClientOverview
 from lilly_scoring.models import LillyScoreResult, ScoreItem
 
 
@@ -117,6 +117,31 @@ class ChartRead(BaseModel):
     client_id: int
     calculation_version: str
     calculation: dict
+
+
+class ChartMemoUpdate(BaseModel):
+    planet: str = Field(min_length=1, max_length=50)
+    content: str = Field(max_length=20000)
+
+
+class ChartMemosUpdateRequest(BaseModel):
+    memos: list[ChartMemoUpdate] = Field(max_length=50)
+
+
+class ChartInterpretationMemoResponse(BaseModel):
+    id: int
+    planet: str
+    content: str
+    created_at: datetime | None
+    updated_at: datetime | None
+
+    @classmethod
+    def from_domain(cls, memo: ChartInterpretationMemo) -> "ChartInterpretationMemoResponse":
+        return cls(**{field: getattr(memo, field) for field in cls.model_fields})
+
+
+class ChartMemosResponse(BaseModel):
+    items: list[ChartInterpretationMemoResponse]
 
 
 class ClientProfileResponse(BaseModel):

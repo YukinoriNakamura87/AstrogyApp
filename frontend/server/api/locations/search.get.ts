@@ -1,3 +1,5 @@
+import { ofetch } from 'ofetch'
+
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const place = typeof query.q === 'string' ? query.q.trim() : ''
@@ -7,7 +9,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    return await $fetch(`${useRuntimeConfig().apiBase}/locations/search`, {
+    return await ofetch(`${useRuntimeConfig().apiBase}/locations/search`, {
       query: { q: place },
     })
   } catch (error: any) {

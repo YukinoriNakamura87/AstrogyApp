@@ -1,9 +1,11 @@
+import { ofetch } from 'ofetch'
+
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const apiBase = useRuntimeConfig().apiBase
 
   try {
-    const client = await $fetch(`${apiBase}/clients`, { method: 'POST', body })
+    const client = await ofetch(`${apiBase}/clients`, { method: 'POST', body })
     setResponseStatus(event, 201)
     return client
   } catch (error: any) {
